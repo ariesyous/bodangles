@@ -430,7 +430,11 @@
             { id: 'damage', name: "Calcium Boost", icon: "💪", desc: "+20% Damage", type: 'stat', stat: 'damage', value: 0.2, mult: true, weight: 15 },
             { id: 'range', name: "Spectral Reach", icon: "🎯", desc: "+20% Range", type: 'stat', stat: 'range', value: 0.2, mult: true, weight: 10 },
             { id: 'health', name: "Marrow Shield", icon: "❤️", desc: "+25 Max HP & Heal", type: 'heal', value: 25, weight: 8 },
-            { id: 'pickup', name: "Vacuum Ribs", icon: "🧲", desc: "+30% Pickup Range", type: 'stat', stat: 'pickupRange', value: 0.3, mult: true, weight: 8 }
+            { id: 'pickup', name: "Vacuum Ribs", icon: "🧲", desc: "+30% Pickup Range", type: 'stat', stat: 'pickupRange', value: 0.3, mult: true, weight: 8 },
+            // New Weapons
+            { id: 'femur', name: "Femur Club", icon: "🍖", desc: "Melee Swing Attack", type: 'weapon', weaponClass: 'FemurClubWeapon', weight: 5 },
+            { id: 'ribcage', name: "Rib Cage", icon: "🩻", desc: "Damaging Aura", type: 'weapon', weaponClass: 'RibCageWeapon', weight: 5 },
+            { id: 'skullbomb', name: "Skull Bomb", icon: "💣", desc: "Explosive Projectile", type: 'weapon', weaponClass: 'SkullBombWeapon', weight: 5 }
         ];
 
         const ENEMY_TYPES = {
@@ -695,23 +699,209 @@
                 ctx.translate(this.x - sx, this.y - sy);
                 ctx.rotate(this.rotation);
 
-                // Glow
-                ctx.shadowColor = CONFIG.COLORS.PROJECTILE;
-                ctx.shadowBlur = 10;
+                if (this.isMelee) {
+                    // Draw Big Bone Club
+                    ctx.fillStyle = '#fff';
+                    ctx.shadowColor = '#000';
+                    ctx.shadowBlur = 5;
+                    ctx.beginPath();
+                    // Handle
+                    ctx.fillRect(0, -5, 40, 10);
+                    // Knobs
+                    ctx.arc(45, -5, 8, 0, Math.PI * 2);
+                    ctx.arc(45, 5, 8, 0, Math.PI * 2);
+                    ctx.fill();
+                } else if (this.isBomb) {
+                    // Draw Skull Bomb
+                    ctx.fillStyle = '#eee';
+                    ctx.beginPath();
+                    ctx.arc(0, 0, 8, 0, Math.PI * 2);
+                    ctx.fill();
+                    // Fuse
+                    ctx.strokeStyle = '#f00';
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.moveTo(0, -8);
+                    ctx.quadraticCurveTo(5, -15, 10, -10);
+                    ctx.stroke();
+                    // Spark
+                    if (Math.random() > 0.5) {
+                        ctx.fillStyle = '#ff0';
+                        ctx.fillRect(10, -12, 4, 4);
+                    }
+                } else {
+                    // Normal Bone Shard
+                    // Glow
+                    ctx.shadowColor = CONFIG.COLORS.PROJECTILE;
+                    ctx.shadowBlur = 10;
 
-                // Bone Shape
-                ctx.fillStyle = '#ffffe0';
-                ctx.beginPath();
-                ctx.moveTo(0, -10);
-                ctx.lineTo(3, -5);
-                ctx.lineTo(3, 5);
-                ctx.lineTo(0, 10);
-                ctx.lineTo(-3, 5);
-                ctx.lineTo(-3, -5);
-                ctx.closePath();
-                ctx.fill();
+                    // Bone Shape
+                    ctx.fillStyle = '#ffffe0';
+                    ctx.beginPath();
+                    ctx.moveTo(0, -10);
+                    ctx.lineTo(3, -5);
+                    ctx.lineTo(3, 5);
+                    ctx.lineTo(0, 10);
+                    ctx.lineTo(-3, 5);
+                    ctx.lineTo(-3, -5);
+                    ctx.closePath();
+                    ctx.fill();
+                }
 
                 ctx.shadowBlur = 0;
+                ctx.restore();
+            }
+        }
+
+        class Explosion extends Entity {
+            constructor(x, y, damage, radius) {
+                super(x, y);
+                this.damage = damage;
+                this.radius = radius;
+                this.life = 0.5; // Visual duration
+                this.maxLife = 0.5;
+                this.hitDealt = false;
+            }
+
+            update(dt, game) {
+                this.life -= dt;
+                if (this.life <= 0) this.markedForDeletion = true;
+
+                if (!this.hitDealt) {
+                    this.hitDealt = true;
+                    const rSq = this.radius * this.radius;
+                    game.enemies.forEach(e => {
+                        const d = (e.x - this.x) ** 2 + (e.y - this.y) ** 2;
+                        if (d < rSq) {
+                            e.takeDamage(this.damage);
+                        }
+                    });
+                }
+            }
+
+            draw(ctx, sx, sy) {
+                const cx = this.x - sx;
+                const cy = this.y - sy;
+                const progress = 1 - (this.life / this.maxLife);
+
+                // Shockwave Ring
+                ctx.strokeStyle = `rgba(255, 200, 50, ${1 - progress})`;
+                ctx.lineWidth = 15 * (1 - progress);
+                ctx.beginPath();
+                ctx.arc(cx, cy, this.radius * progress, 0, Math.PI * 2);
+                ctx.stroke();
+
+                // Core flash (fades out fast)
+                if (progress < 0.3) {
+                    ctx.fillStyle = `rgba(255, 255, 255, ${1 - (progress / 0.3)})`;
+                    ctx.beginPath();
+                    ctx.arc(cx, cy, this.radius * 0.5, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                // Smoke/Fire inner
+                ctx.fillStyle = `rgba(255, 50, 0, ${(1 - progress) * 0.5})`;
+                ctx.beginPath();
+                ctx.arc(cx, cy, this.radius * 0.8 * progress, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+
+        class MeleeSwing extends Entity {
+            constructor(owner, angle, duration, damage, knockback) {
+                super(owner.x, owner.y);
+                this.owner = owner;
+                this.startAngle = angle - 1.5; // Start 90 deg back
+                this.endAngle = angle + 1.5;   // End 90 deg forward
+                this.currentAngle = this.startAngle;
+                this.duration = duration;
+                this.maxDuration = duration;
+                this.damage = damage;
+                this.knockback = knockback;
+                this.size = 60; // For hitbox
+                this.hitList = []; // Enemies already hit
+            }
+
+            update(dt, game) {
+                this.duration -= dt;
+                if (this.duration <= 0) this.markedForDeletion = true;
+
+                // Stick to owner
+                this.x = this.owner.x;
+                this.y = this.owner.y;
+
+                // Rotate
+                const p = 1 - (this.duration / this.maxDuration); // 0 to 1
+                // Easing? Linear for now
+                this.currentAngle = this.startAngle + (this.endAngle - this.startAngle) * p;
+
+                // Hitbox logic (Arc check is hard, let's just checking circle at tip of club)
+                const tipDist = 60;
+                const tipX = this.x + Math.cos(this.currentAngle) * tipDist;
+                const tipY = this.y + Math.sin(this.currentAngle) * tipDist;
+
+                // Check collisions
+                // We'll be generous and check a few points along the arm if needed, or just a big circle at the tip
+                // Let's check circle at tip + mid
+                const checkPoints = [
+                    { x: tipX, y: tipY, r: 40 },
+                    { x: this.x + Math.cos(this.currentAngle) * 30, y: this.y + Math.sin(this.currentAngle) * 30, r: 20 }
+                ];
+
+                game.enemies.forEach(e => {
+                    if (this.hitList.includes(e.id)) return; // Don't hit twice per swing
+
+                    let hit = false;
+                    for (const cp of checkPoints) {
+                        const d = (e.x - cp.x) ** 2 + (e.y - cp.y) ** 2;
+                        if (d < (cp.r + e.size) ** 2) {
+                            hit = true;
+                            break;
+                        }
+                    }
+
+                    if (hit) {
+                        e.takeDamage(this.damage);
+                        // Knockback
+                        const kbAngle = Math.atan2(e.y - this.y, e.x - this.x);
+                        e.x += Math.cos(kbAngle) * this.knockback * dt * 5; // Simplified kb push
+                        e.y += Math.sin(kbAngle) * this.knockback * dt * 5;
+                        this.hitList.push(e.id);
+                    }
+                });
+            }
+
+            draw(ctx, sx, sy) {
+                const cx = this.x - sx;
+                const cy = this.y - sy;
+
+                ctx.save();
+                ctx.translate(cx, cy);
+                ctx.rotate(this.currentAngle);
+
+                // Draw Club
+                // Handle
+                ctx.fillStyle = '#ddd';
+                ctx.shadowColor = '#000';
+                ctx.shadowBlur = 5;
+                ctx.beginPath();
+                ctx.fillRect(0, -5, 80, 10);
+
+                // Big Bone End
+                ctx.fillStyle = '#fff';
+                ctx.beginPath();
+                ctx.arc(80, -8, 12, 0, Math.PI * 2);
+                ctx.arc(80, 8, 12, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Swoosh trail
+                ctx.shadowBlur = 0;
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+                ctx.lineWidth = 20;
+                ctx.beginPath();
+                ctx.moveTo(0, 0);
+                // Draw arc behind? Maybe next time
+
                 ctx.restore();
             }
         }
@@ -820,8 +1010,9 @@
         }
 
         class Player extends Entity {
-            constructor(x, y) {
+            constructor(game, x, y) {
                 super(x, y);
+                this.game = game;
                 this.vx = 0; this.vy = 0;
                 this.size = 32;
 
@@ -840,8 +1031,11 @@
                 this.level = 1;
                 this.nextLevelXp = 20;
 
-                this.fireTimer = 0;
                 this.invincibleTimer = 0;
+
+                // Initialize Weapons
+                this.weapons = [];
+                this.weapons.push(new BoneShardWeapon(game, this));
             }
 
             gainXp(amount) {
@@ -866,7 +1060,7 @@
                 this.hp = Math.min(this.hp + amount, this.stats.maxHp);
             }
 
-            update(dt, input, game) {
+            update(dt, input) {
                 const move = input.getVector();
                 const targetVx = move.x * this.stats.speed;
                 const targetVy = move.y * this.stats.speed;
@@ -879,34 +1073,8 @@
 
                 if (this.invincibleTimer > 0) this.invincibleTimer -= dt;
 
-                this.fireTimer += dt;
-                if (this.fireTimer >= 1.0 / this.stats.fireRate) {
-                    this.fireTimer = 0;
-                    this.fire(game);
-                }
-            }
-
-            fire(game) {
-                // Simple finding nearest
-                let targets = [];
-                const rangeSq = this.stats.range * this.stats.range;
-                for (const e of game.enemies) {
-                    const d = (e.x - this.x) ** 2 + (e.y - this.y) ** 2;
-                    if (d < rangeSq) targets.push({ e, d });
-                }
-                targets.sort((a, b) => a.d - b.d);
-                if (targets.length === 0) return;
-
-                const count = Math.floor(this.stats.projectileCount);
-                for (let i = 0; i < count; i++) {
-                    const target = targets[i % targets.length].e;
-                    let spread = (count > 1) ? (i - (count - 1) / 2) * 0.2 : 0;
-                    const angle = Math.atan2(target.y - this.y, target.x - this.x) + spread;
-
-                    const vx = Math.cos(angle) * 700;
-                    const vy = Math.sin(angle) * 700;
-                    game.projectiles.push(new Projectile(this.x, this.y, vx, vy, this.stats.damage, 1.5));
-                }
+                // Update Weapons
+                this.weapons.forEach(w => w.update(dt));
             }
 
             draw(ctx, sx, sy) {
@@ -951,10 +1119,279 @@
                 ctx.arc(cx - 15, cy + Math.sin(t) * 3, 4, 0, Math.PI * 2);
                 ctx.arc(cx + 15, cy + Math.cos(t) * 3, 4, 0, Math.PI * 2);
                 ctx.fill();
+
+                // Draw Weapons (e.g. Auras)
+                this.weapons.forEach(w => w.draw(ctx, sx, sy));
             }
         }
 
-        // --- Game Engine ---
+        // --- Weapon System ---
+        class Weapon {
+            constructor(game, owner) {
+                this.game = game;
+                this.owner = owner;
+                this.cooldownTimer = 0;
+                this.level = 1;
+                // Base stats, overridden by subclasses
+                this.stats = {
+                    cooldown: 1.0,
+                    damage: 10,
+                    count: 1,
+                    speed: 100, // Speed of projectile if applicable
+                    duration: 1, // Life of projectile
+                    range: 200,
+                    area: 1     // Scale multiplier
+                };
+            }
+
+            // Apply modifiers from player stats or upgrades
+            getStat(name) {
+                let val = this.stats[name];
+                // Apply player global multipliers if they exist in future
+                // e.g. val *= this.owner.stats.globalDamageMult;
+                return val;
+            }
+
+            update(dt) {
+                if (this.cooldownTimer > 0) {
+                    this.cooldownTimer -= dt;
+                }
+                if (this.cooldownTimer <= 0) {
+                    this.fire();
+                    // Reset cooldown, factoring in Fire Rate (higher rate = lower cooldown)
+                    // We treat 'fireRate' stat as Attacks Per Second multiplier.
+                    // Default cooldown is 1/fireRate if we used that, but here we use base cooldown / (1 + bonuses)
+                    const rateMult = (this.owner.stats.fireRate || 1.0);
+                    this.cooldownTimer = this.stats.cooldown / rateMult;
+                }
+            }
+
+            fire() {
+                // Override me
+            }
+
+            draw(ctx, sx, sy) {
+                // Override me for auras or visible weapons
+            }
+
+            upgrade() {
+                this.level++;
+                // Check weapon-specific upgrade table
+            }
+        }
+
+        // --- WEAPON IMPLEMENTATIONS ---
+
+        class BoneShardWeapon extends Weapon {
+            constructor(game, owner) {
+                super(game, owner);
+                this.stats = {
+                    cooldown: 1.0, // Base 1s
+                    damage: 20,
+                    count: 1,
+                    speed: 700,
+                    duration: 1.5,
+                    range: 600
+                };
+                this.name = "Bone Shard";
+            }
+
+            fire() {
+                const pStats = this.owner.stats;
+                const count = Math.floor(this.stats.count + (pStats.projectileCount - 1));
+                // Use legacy stats for now
+                const finalDmg = pStats.damage;
+
+                // Target finding
+                let targets = [];
+                const rangeSq = pStats.range * pStats.range;
+                for (const e of this.game.enemies) {
+                    const d = (e.x - this.owner.x) ** 2 + (e.y - this.owner.y) ** 2;
+                    if (d < rangeSq) targets.push({ e, d });
+                }
+                targets.sort((a, b) => a.d - b.d);
+                if (targets.length === 0) return;
+
+                const finalCount = Math.floor(pStats.projectileCount);
+                for (let i = 0; i < finalCount; i++) {
+                    const target = targets[i % targets.length].e;
+                    let spread = (finalCount > 1) ? (i - (finalCount - 1) / 2) * 0.2 : 0;
+                    const angle = Math.atan2(target.y - this.owner.y, target.x - this.owner.x) + spread;
+
+                    const vx = Math.cos(angle) * this.stats.speed;
+                    const vy = Math.sin(angle) * this.stats.speed;
+
+                    this.game.projectiles.push(new Projectile(
+                        this.owner.x, this.owner.y,
+                        vx, vy,
+                        finalDmg,
+                        this.stats.duration
+                    ));
+                }
+            }
+        }
+
+        class FemurClubWeapon extends Weapon {
+            constructor(game, owner) {
+                super(game, owner);
+                this.stats = {
+                    cooldown: 1.5,
+                    damage: 35,
+                    count: 1,
+                    duration: 0.3,
+                    range: 100, // Size of swing
+                    knockback: 100
+                };
+                this.name = "Femur Club";
+            }
+
+            fire() {
+                // Swing in facing direction
+                // For simplicity, swing towards nearest enemy or movement direction
+                // Default to movement
+                let vx = this.owner.vx;
+                let vy = this.owner.vy;
+                if (Math.abs(vx) < 1 && Math.abs(vy) < 1) vx = 1; // Default right
+
+                // If enemies nearby, aim at them
+                let closeEnemies = this.game.enemies.filter(e => {
+                    const d = (e.x - this.owner.x) ** 2 + (e.y - this.owner.y) ** 2;
+                    return d < 40000; // 200px range
+                });
+                if (closeEnemies.length > 0) {
+                    // Get closest
+                    closeEnemies.sort((a, b) => ((a.x - this.owner.x) ** 2 + (a.y - this.owner.y) ** 2) - ((b.x - this.owner.x) ** 2 + (b.y - this.owner.y) ** 2));
+                    let target = closeEnemies[0];
+                    vx = target.x - this.owner.x;
+                    vy = target.y - this.owner.y;
+                }
+
+                const angle = Math.atan2(vy, vx);
+
+                // Spawn MeleeSwing attached to player
+                this.game.particles.push(new MeleeSwing(
+                    this.owner,
+                    angle,
+                    this.stats.duration,
+                    this.stats.damage,
+                    this.stats.knockback
+                ));
+            }
+        }
+
+        class RibCageWeapon extends Weapon {
+            constructor(game, owner) {
+                super(game, owner);
+                this.stats = {
+                    cooldown: 0.5, // Tick rate
+                    damage: 5,
+                    range: 120, // Radius
+                    duration: 0 // Infinite
+                };
+                this.name = "Rib Cage";
+                this.pulseTimer = 0;
+            }
+
+            update(dt) {
+                // Rib Cage is always active, but deals damage on tick
+                this.pulseTimer += dt;
+                if (this.pulseTimer >= this.stats.cooldown) {
+                    this.pulseTimer = 0;
+                    // Deal damage
+                    const rSq = this.stats.range * this.stats.range;
+                    this.game.enemies.forEach(e => {
+                        const d = (e.x - this.owner.x) ** 2 + (e.y - this.owner.y) ** 2;
+                        if (d < rSq) {
+                            const dead = e.takeDamage(this.stats.damage);
+                            if (dead) {
+                                this.owner.gainXp(e.props.xp);
+                                this.game.score += e.props.xp;
+                                // Chance to drop chest
+                                if (Math.random() < 0.01) this.game.chests.push(new Chest(e.x, e.y));
+                                else if (Math.random() < 0.05) this.game.gems.push(new Gem(e.x, e.y, e.props.xp));
+                            }
+                        }
+                    });
+                }
+            }
+
+            draw(ctx, sx, sy) {
+                const cx = this.owner.x - sx;
+                const cy = this.owner.y - sy;
+
+                // Periodic pulse effect
+                const pulse = Math.sin(Date.now() / 200) * 5;
+
+                ctx.strokeStyle = `rgba(255, 255, 255, 0.2)`;
+                ctx.lineWidth = 4;
+                ctx.beginPath();
+                ctx.arc(cx, cy, this.stats.range + pulse, 0, Math.PI * 2);
+                ctx.stroke();
+
+                // Rib bones
+                ctx.strokeStyle = '#eee';
+                ctx.lineWidth = 3;
+                const r = this.stats.range + pulse;
+                for (let i = 0; i < 6; i++) {
+                    const a = (Date.now() / 1000) + (i * (Math.PI / 3));
+                    ctx.beginPath();
+                    ctx.arc(cx, cy, r, a, a + 0.5);
+                    ctx.stroke();
+                }
+            }
+        }
+
+        class SkullBombWeapon extends Weapon {
+            constructor(game, owner) {
+                super(game, owner);
+                this.stats = {
+                    cooldown: 3.0,
+                    damage: 50,
+                    radius: 120, // Explosion size
+                    speed: 400
+                };
+                this.name = "Skull Bomb";
+            }
+
+            fire() {
+                let closest = null;
+                let minDist = Infinity;
+                for (const e of this.game.enemies) {
+                    const d = (e.x - this.owner.x) ** 2 + (e.y - this.owner.y) ** 2;
+                    if (d < minDist) { minDist = d; closest = e; }
+                }
+
+                let targetX = 0, targetY = 0;
+                if (closest && minDist < 250000) { // 500 range
+                    targetX = closest.x;
+                    targetY = closest.y;
+                } else {
+                    // Random nearby
+                    const angle = Math.random() * Math.PI * 2;
+                    targetX = this.owner.x + Math.cos(angle) * 200;
+                    targetY = this.owner.y + Math.sin(angle) * 200;
+                }
+
+                const angle = Math.atan2(targetY - this.owner.y, targetX - this.owner.x);
+                const p = new Projectile(this.owner.x, this.owner.y, Math.cos(angle) * this.stats.speed, Math.sin(angle) * this.stats.speed, this.stats.damage, 1.0);
+                p.isBomb = true;
+                p.bombRadius = this.stats.radius;
+                // Override update to explode
+                p.update = (dt) => {
+                    p.x += p.vx * dt;
+                    p.y += p.vy * dt;
+                    p.rotation += 10 * dt;
+                    p.life -= dt;
+                    if (p.life <= 0) {
+                        p.markedForDeletion = true;
+                        // Explode!
+                        this.game.particles.push(new Explosion(p.x, p.y, p.damage, p.bombRadius));
+                    }
+                };
+                this.game.projectiles.push(p);
+            }
+        }
+
         class Game {
             constructor() {
                 this.canvas = document.getElementById('gameCanvas');
@@ -1003,7 +1440,7 @@
             }
 
             reset() {
-                this.player = new Player(0, 0);
+                this.player = new Player(this, 0, 0);
                 this.enemies = [];
                 this.projectiles = [];
                 this.particles = [];
@@ -1061,7 +1498,7 @@
                 this.enemies.forEach(e => e.update(dt, this.player));
                 this.gems.forEach(e => e.update(dt, this.player));
                 this.chests.forEach(e => e.update(dt));
-                this.particles.forEach(e => e.update(dt));
+                this.particles.forEach(e => e.update(dt, this));
                 this.texts.forEach(e => e.update(dt));
 
                 // Cleanup
@@ -1247,6 +1684,21 @@
                 } else if (u.type === 'heal') {
                     this.player.stats.maxHp += u.value;
                     this.player.heal(u.value);
+                } else if (u.type === 'weapon') {
+                    const existing = this.player.weapons.find(w => w.name === u.name);
+                    if (existing) {
+                        existing.upgrade();
+                    } else {
+                        // Instantiate by class name string
+                        // We need a map or switch because eval is bad (though this is client side game)
+                        // Better to use a switch or object map
+                        switch (u.weaponClass) {
+                            case 'FemurClubWeapon': this.player.weapons.push(new FemurClubWeapon(this, this.player)); break;
+                            case 'RibCageWeapon': this.player.weapons.push(new RibCageWeapon(this, this.player)); break;
+                            case 'SkullBombWeapon': this.player.weapons.push(new SkullBombWeapon(this, this.player)); break;
+                            case 'BoneShardWeapon': this.player.weapons.push(new BoneShardWeapon(this, this.player)); break;
+                        }
+                    }
                 }
             }
 
