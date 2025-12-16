@@ -427,14 +427,16 @@
             { id: 'multishot', name: "Bone Split", icon: "🦴", desc: "+1 Projectile", type: 'stat', stat: 'projectileCount', value: 1, weight: 10 },
             { id: 'rate', name: "Grave Haste", icon: "⚡", desc: "+15% Fire Rate", type: 'stat', stat: 'fireRate', value: 0.15, mult: true, weight: 12 },
             { id: 'speed', name: "Ghost Step", icon: "👻", desc: "+15% Move Speed", type: 'stat', stat: 'speed', value: 0.15, mult: true, weight: 10 },
-            { id: 'damage', name: "Calcium Boost", icon: "💪", desc: "+20% Damage", type: 'stat', stat: 'damage', value: 0.2, mult: true, weight: 15 },
+            { id: 'damage', name: "Calcium Boost", icon: "💪", desc: "+20% Damage", type: 'stat', stat: 'damage', value: 0.2, mult: true, weight: 0 }, // Removed (weight 0)
             { id: 'range', name: "Spectral Reach", icon: "🎯", desc: "+20% Range", type: 'stat', stat: 'range', value: 0.2, mult: true, weight: 10 },
             { id: 'health', name: "Marrow Shield", icon: "❤️", desc: "+25 Max HP & Heal", type: 'heal', value: 25, weight: 8 },
             { id: 'pickup', name: "Vacuum Ribs", icon: "🧲", desc: "+30% Pickup Range", type: 'stat', stat: 'pickupRange', value: 0.3, mult: true, weight: 8 },
             // New Weapons
             { id: 'femur', name: "Femur Club", icon: "🍖", desc: "Melee Swing Attack", type: 'weapon', weaponClass: 'FemurClubWeapon', weight: 5 },
             { id: 'ribcage', name: "Rib Cage", icon: "🩻", desc: "Damaging Aura", type: 'weapon', weaponClass: 'RibCageWeapon', weight: 5 },
-            { id: 'skullbomb', name: "Skull Bomb", icon: "💣", desc: "Explosive Projectile", type: 'weapon', weaponClass: 'SkullBombWeapon', weight: 5 }
+            { id: 'skullbomb', name: "Skull Bomb", icon: "💣", desc: "Explosive Projectile", type: 'weapon', weaponClass: 'SkullBombWeapon', weight: 5 },
+            { id: 'spine', name: "Spine Whip", icon: "🐍", desc: "Directional Lash", type: 'weapon', weaponClass: 'SpineWhipWeapon', weight: 5 },
+            { id: 'tombstone', name: "Tombstone Drop", icon: "🪦", desc: "Crush from Above", type: 'weapon', weaponClass: 'TombstoneWeapon', weight: 5 }
         ];
 
         const ENEMY_TYPES = {
@@ -903,6 +905,123 @@
                 // Draw arc behind? Maybe next time
 
                 ctx.restore();
+            }
+        }
+
+        class SpineWhip extends Entity {
+            constructor(owner, angle, length, damage) {
+                super(owner.x, owner.y);
+                this.owner = owner;
+                this.angle = angle;
+                this.length = length;
+                this.damage = damage;
+                this.life = 0.2; // Quick lash
+                this.hitList = [];
+            }
+
+            update(dt, game) {
+                this.life -= dt;
+                if (this.life <= 0) this.markedForDeletion = true;
+
+                this.x = this.owner.x;
+                this.y = this.owner.y;
+
+                // Rectangular hitbox check along the line of the whip
+                // Simplified: check points along the line
+                const steps = 10;
+                for (let i = 1; i <= steps; i++) {
+                    const ld = (this.length / steps) * i;
+                    const lx = this.x + Math.cos(this.angle) * ld;
+                    const ly = this.y + Math.sin(this.angle) * ld;
+
+                    game.enemies.forEach(e => {
+                        if (this.hitList.includes(e.id)) return;
+                        const d = (e.x - lx) ** 2 + (e.y - ly) ** 2;
+                        if (d < (e.size + 20) ** 2) { // 20 radius whip thickness
+                            e.takeDamage(this.damage);
+                            this.hitList.push(e.id);
+                        }
+                    });
+                }
+            }
+
+            draw(ctx, sx, sy) {
+                const cx = this.x - sx;
+                const cy = this.y - sy;
+
+                ctx.save();
+                ctx.translate(cx, cy);
+                ctx.rotate(this.angle);
+
+                // Draw Spine
+                for (let i = 0; i < 10; i++) {
+                    const x = (this.length / 10) * i;
+                    ctx.fillStyle = '#eee';
+                    ctx.beginPath();
+                    ctx.fillRect(x, -5, (this.length / 10) - 2, 10);
+                }
+
+                ctx.restore();
+            }
+        }
+
+        class Tombstone extends Entity {
+            constructor(x, y, damage) {
+                super(x, y - 500); // Start high up
+                this.targetY = y;
+                this.damage = damage;
+                this.vy = 1000;
+                this.landed = false;
+                this.life = 1.0; // Stay for 1 sec after landing
+            }
+
+            update(dt, game) {
+                if (!this.landed) {
+                    this.y += this.vy * dt;
+                    if (this.y >= this.targetY) {
+                        this.y = this.targetY;
+                        this.landed = true;
+                        // Smash!
+                        // Screenshake maybe?
+                        const radius = 80;
+                        game.enemies.forEach(e => {
+                            const d = (e.x - this.x) ** 2 + (e.y - this.y) ** 2;
+                            if (d < (radius + e.size) ** 2) {
+                                e.takeDamage(this.damage * 2); // Massive crit on direct hit
+                            }
+                        });
+                        // Also purely visual shockwave
+                        game.particles.push(new Explosion(this.x, this.y, this.damage / 2, 120)); // Smaller damage wider area
+                    }
+                } else {
+                    this.life -= dt;
+                    if (this.life <= 0) this.markedForDeletion = true;
+                }
+            }
+
+            draw(ctx, sx, sy) {
+                const cx = this.x - sx;
+                const cy = this.y - sy;
+
+                // Shadow if in air
+                if (!this.landed) {
+                    const groundY = this.targetY - sy;
+                    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+                    ctx.beginPath();
+                    ctx.ellipse(cx, groundY, 40, 15, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                // Tombstone
+                ctx.fillStyle = '#555';
+                ctx.fillRect(cx - 20, cy - 40, 40, 50);
+                ctx.beginPath();
+                ctx.arc(cx, cy - 40, 20, Math.PI, 0);
+                ctx.fill();
+                // RIP
+                ctx.fillStyle = '#333';
+                ctx.font = '10px monospace';
+                ctx.fillText("R.I.P", cx - 12, cy - 20);
             }
         }
 
@@ -1392,6 +1511,76 @@
             }
         }
 
+        class SpineWhipWeapon extends Weapon {
+            constructor(game, owner) {
+                super(game, owner);
+                this.stats = {
+                    cooldown: 1.2,
+                    damage: 30,
+                    range: 200,   // Length
+                };
+                this.name = "Spine Whip";
+            }
+
+            fire() {
+                // Lash in movement direction
+                let vx = this.owner.vx;
+                let vy = this.owner.vy;
+                // If not moving, check enemies
+                if (Math.abs(vx) < 1 && Math.abs(vy) < 1) {
+                    let closest = null;
+                    let minDist = Infinity;
+                    for (const e of this.game.enemies) {
+                        const d = (e.x - this.owner.x) ** 2 + (e.y - this.owner.y) ** 2;
+                        if (d < minDist) { minDist = d; closest = e; }
+                    }
+                    if (closest && minDist < 160000) { // 400px
+                        vx = closest.x - this.owner.x;
+                        vy = closest.y - this.owner.y;
+                    } else {
+                        vx = 1; vy = 0; // Default right
+                    }
+                }
+
+                const angle = Math.atan2(vy, vx);
+                this.game.particles.push(new SpineWhip(this.owner, angle, this.stats.range, this.stats.damage));
+            }
+        }
+
+        class TombstoneWeapon extends Weapon {
+            constructor(game, owner) {
+                super(game, owner);
+                this.stats = {
+                    cooldown: 4.0,
+                    damage: 100,
+                };
+                this.name = "Tombstone Drop";
+            }
+
+            fire() {
+                // Pick a random enemy to drop ON
+                const targets = this.game.enemies.filter(e => {
+                    const d = (e.x - this.owner.x) ** 2 + (e.y - this.owner.y) ** 2;
+                    return d < 640000; // 800px range
+                });
+
+                let targetX = this.owner.x;
+                let targetY = this.owner.y;
+
+                if (targets.length > 0) {
+                    const t = targets[Math.floor(Math.random() * targets.length)];
+                    targetX = t.x;
+                    targetY = t.y;
+                } else {
+                    // Random spot
+                    targetX += (Math.random() - 0.5) * 400;
+                    targetY += (Math.random() - 0.5) * 400;
+                }
+
+                this.game.particles.push(new Tombstone(targetX, targetY, this.stats.damage));
+            }
+        }
+
         class Game {
             constructor() {
                 this.canvas = document.getElementById('gameCanvas');
@@ -1697,6 +1886,8 @@
                             case 'RibCageWeapon': this.player.weapons.push(new RibCageWeapon(this, this.player)); break;
                             case 'SkullBombWeapon': this.player.weapons.push(new SkullBombWeapon(this, this.player)); break;
                             case 'BoneShardWeapon': this.player.weapons.push(new BoneShardWeapon(this, this.player)); break;
+                            case 'SpineWhipWeapon': this.player.weapons.push(new SpineWhipWeapon(this, this.player)); break;
+                            case 'TombstoneWeapon': this.player.weapons.push(new TombstoneWeapon(this, this.player)); break;
                         }
                     }
                 }
