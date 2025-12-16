@@ -272,6 +272,47 @@
             background: #fff;
             transform: scale(1.05);
         }
+
+        /* Mobile Controls */
+        #mobile-controls {
+            position: absolute;
+            bottom: 50px;
+            left: 50px;
+            width: 150px;
+            height: 150px;
+            pointer-events: auto;
+            /* Allow touch */
+            display: none;
+            /* Hidden by default, shown on touch */
+        }
+
+        @media (hover: none) and (pointer: coarse) {
+            #mobile-controls {
+                display: block;
+            }
+        }
+
+        #joystick-base {
+            width: 100%;
+            height: 100%;
+            background: rgba(255, 255, 255, 0.1);
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            position: relative;
+            touch-action: none;
+        }
+
+        #joystick-knob {
+            width: 50px;
+            height: 50px;
+            background: rgba(255, 255, 255, 0.5);
+            border-radius: 50%;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            box-shadow: 0 0 10px rgba(255, 255, 255, 0.2);
+        }
     </style>
 </head>
 
@@ -300,6 +341,13 @@
             <!-- Score -->
             <div id="score-container">
                 Score: <span id="score">0</span>
+            </div>
+        </div>
+
+        <!-- Mobile Joystick -->
+        <div id="mobile-controls">
+            <div id="joystick-base">
+                <div id="joystick-knob"></div>
             </div>
         </div>
     </div>
@@ -348,7 +396,7 @@
         <div class="title-text"
             style="color: #ffffff; text-shadow: 0 0 20px #aa0000; font-size: 6rem; margin-bottom: 0;">BODANGLES</div>
         <div style="font-family: 'Creepster', cursive; font-size: 2rem; color: #cc4444; margin-bottom: 50px;">BONE TO BE
-            WILD</div>
+            WILD <span style="font-size: 1rem; color: #666;">(v1.1 Fixed)</span></div>
         <button id="new-game-btn"
             style="font-size: 2.5rem; padding: 20px 60px; border: 4px solid #aa0000; color: #aa0000; background: #000;">NEW
             GAME</button>
@@ -401,18 +449,104 @@
                 this.keys = {};
                 window.addEventListener('keydown', e => this.keys[e.code] = true);
                 window.addEventListener('keyup', e => this.keys[e.code] = false);
+
+                // Touch Joystick
+                this.touchId = null;
+                this.stickX = 0;
+                this.stickY = 0;
+                this.baseEl = document.getElementById('joystick-base');
+                this.knobEl = document.getElementById('joystick-knob');
+
+                this.baseEl.addEventListener('touchstart', e => this.handleTouchStart(e), { passive: false });
+                this.baseEl.addEventListener('touchmove', e => this.handleTouchMove(e), { passive: false });
+                this.baseEl.addEventListener('touchend', e => this.handleTouchEnd(e));
+
+                // Show joystick if touch detected anywhere
+                window.addEventListener('touchstart', () => {
+                    document.getElementById('mobile-controls').style.display = 'block';
+                }, { once: true });
             }
+
+            handleTouchStart(e) {
+                e.preventDefault();
+                const touch = e.changedTouches[0];
+                this.touchId = touch.identifier;
+                this.updateJoystick(touch.clientX, touch.clientY);
+            }
+
+            handleTouchMove(e) {
+                e.preventDefault();
+                for (let i = 0; i < e.changedTouches.length; i++) {
+                    if (e.changedTouches[i].identifier === this.touchId) {
+                        this.updateJoystick(e.changedTouches[i].clientX, e.changedTouches[i].clientY);
+                        break;
+                    }
+                }
+            }
+
+            handleTouchEnd(e) {
+                e.preventDefault();
+                for (let i = 0; i < e.changedTouches.length; i++) {
+                    if (e.changedTouches[i].identifier === this.touchId) {
+                        this.touchId = null;
+                        this.stickX = 0;
+                        this.stickY = 0;
+                        this.knobEl.style.transform = `translate(-50%, -50%)`;
+                        break;
+                    }
+                }
+            }
+
+            updateJoystick(clientX, clientY) {
+                const rect = this.baseEl.getBoundingClientRect();
+                const centerX = rect.left + rect.width / 2;
+                const centerY = rect.top + rect.height / 2;
+
+                let dx = clientX - centerX;
+                let dy = clientY - centerY;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                const maxDist = rect.width / 2 - 25; // 25 is knob radius
+
+                if (dist > maxDist) {
+                    dx = (dx / dist) * maxDist;
+                    dy = (dy / dist) * maxDist;
+                }
+
+                // Normalize -1 to 1
+                this.stickX = dx / maxDist;
+                this.stickY = dy / maxDist;
+
+                this.knobEl.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
+            }
+
             isDown(...codes) { return codes.some(c => this.keys[c]); }
+
             getVector() {
                 let x = 0, y = 0;
+                // Keyboard
                 if (this.isDown('ArrowUp', 'KeyW')) y -= 1;
                 if (this.isDown('ArrowDown', 'KeyS')) y += 1;
                 if (this.isDown('ArrowLeft', 'KeyA')) x -= 1;
                 if (this.isDown('ArrowRight', 'KeyD')) x += 1;
-                if (x !== 0 || y !== 0) {
-                    const len = Math.sqrt(x * x + y * y);
-                    x /= len; y /= len;
+
+                // Touch
+                if (x === 0 && y === 0) {
+                    x = this.stickX;
+                    y = this.stickY;
                 }
+
+                // Normalize keyboard only if significant
+                if (Math.abs(x) > 0.1 || Math.abs(y) > 0.1) {
+                    // Only normalize if using keyboard discrete inputs (length > 1)
+                    // If joystick, it's already circular, but clamping to 1 is good
+                    const len = Math.sqrt(x * x + y * y);
+                    if (len > 1) {
+                        x /= len; y /= len;
+                    }
+                } else {
+                    x = 0; y = 0;
+                }
+
                 return { x, y };
             }
         }
@@ -560,8 +694,24 @@
                 ctx.save();
                 ctx.translate(this.x - sx, this.y - sy);
                 ctx.rotate(this.rotation);
-                ctx.fillStyle = CONFIG.COLORS.PROJECTILE;
-                ctx.fillRect(-4, -8, 8, 16);
+
+                // Glow
+                ctx.shadowColor = CONFIG.COLORS.PROJECTILE;
+                ctx.shadowBlur = 10;
+
+                // Bone Shape
+                ctx.fillStyle = '#ffffe0';
+                ctx.beginPath();
+                ctx.moveTo(0, -10);
+                ctx.lineTo(3, -5);
+                ctx.lineTo(3, 5);
+                ctx.lineTo(0, 10);
+                ctx.lineTo(-3, 5);
+                ctx.lineTo(-3, -5);
+                ctx.closePath();
+                ctx.fill();
+
+                ctx.shadowBlur = 0;
                 ctx.restore();
             }
         }
@@ -597,23 +747,74 @@
                 const cx = this.x - sx;
                 const cy = this.y - sy;
                 const s = this.props.size;
+                const name = this.props.name;
 
-                if (this.hitFlash > 0) ctx.fillStyle = '#fff';
-                else ctx.fillStyle = this.props.color;
+                // Shadow
+                ctx.fillStyle = 'rgba(0,0,0,0.4)';
+                ctx.beginPath();
+                ctx.ellipse(cx, cy + s / 2, s / 2, s / 5, 0, 0, Math.PI * 2);
+                ctx.fill();
 
-                ctx.fillRect(cx - s / 2, cy - s / 2, s, s);
+                if (this.hitFlash > 0) {
+                    ctx.fillStyle = '#fff';
+                    ctx.fillRect(cx - s / 2, cy - s / 2, s, s);
+                    return;
+                }
 
-                // Face
-                ctx.fillStyle = '#000';
-                ctx.fillRect(cx - s / 4, cy - s / 4, s / 5, s / 5);
-                ctx.fillRect(cx + s / 10, cy - s / 4, s / 5, s / 5);
+                if (name === 'Bat') {
+                    // Bat Wings
+                    const wingOffset = Math.sin(Date.now() / 50) * 10;
+                    ctx.fillStyle = this.props.color;
+                    ctx.beginPath();
+                    // Body
+                    ctx.arc(cx, cy, s / 3, 0, Math.PI * 2);
+                    // Wings
+                    ctx.moveTo(cx - 5, cy);
+                    ctx.quadraticCurveTo(cx - s, cy - 20 + wingOffset, cx - s - 10, cy + 10);
+                    ctx.quadraticCurveTo(cx - s / 2, cy + 5, cx - 5, cy + 5);
 
-                // HP Bar
+                    ctx.moveTo(cx + 5, cy);
+                    ctx.quadraticCurveTo(cx + s, cy - 20 + wingOffset, cx + s + 10, cy + 10);
+                    ctx.quadraticCurveTo(cx + s / 2, cy + 5, cx + 5, cy + 5);
+                    ctx.fill();
+
+                    // Bat Eyes
+                    ctx.fillStyle = '#ff0';
+                    ctx.fillRect(cx - 3, cy - 2, 2, 2);
+                    ctx.fillRect(cx + 1, cy - 2, 2, 2);
+
+                } else if (name === 'Zombie' || name === 'Grave Guard') {
+                    // Zombie Shape
+                    const bob = Math.abs(Math.sin(Date.now() / 150)) * 5;
+                    ctx.fillStyle = this.props.color;
+
+                    // Head
+                    ctx.beginPath();
+                    ctx.arc(cx, cy - s / 3 - bob, s / 3, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Body
+                    ctx.fillRect(cx - s / 3, cy - bob, s / 1.5, s / 1.5);
+
+                    // Arms (Outstretched)
+                    ctx.fillRect(cx - s / 2, cy - bob, s, s / 5);
+
+                    // Eyes
+                    ctx.fillStyle = '#000';
+                    ctx.fillRect(cx - 5, cy - s / 3 - bob - 2, 3, 3);
+                    ctx.fillRect(cx + 2, cy - s / 3 - bob - 2, 3, 3);
+                } else {
+                    // Bosses/Generic
+                    ctx.fillStyle = this.props.color;
+                    ctx.fillRect(cx - s / 2, cy - s / 2, s, s);
+                }
+
+                // HP Bar (Universal)
                 if (this.hp < this.maxHp) {
                     ctx.fillStyle = '#500';
-                    ctx.fillRect(cx - s / 2, cy - s / 2 - 8, s, 4);
+                    ctx.fillRect(cx - s / 2, cy - s / 2 - 12, s, 4);
                     ctx.fillStyle = '#0f0';
-                    ctx.fillRect(cx - s / 2, cy - s / 2 - 8, Math.max(0, s * (this.hp / this.maxHp)), 4);
+                    ctx.fillRect(cx - s / 2, cy - s / 2 - 12, Math.max(0, s * (this.hp / this.maxHp)), 4);
                 }
             }
         }
@@ -713,16 +914,43 @@
                 const cx = this.x - sx;
                 const cy = this.y - sy;
 
-                ctx.fillStyle = CONFIG.COLORS.PLAYER;
+                // Shadow
+                ctx.fillStyle = 'rgba(0,0,0,0.5)';
+                ctx.beginPath();
+                ctx.ellipse(cx, cy + 15, 10, 4, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Body (Robes)
+                ctx.fillStyle = '#222';
+                ctx.beginPath();
+                ctx.moveTo(cx, cy - 10);
+                ctx.lineTo(cx + 12, cy + 15);
+                ctx.lineTo(cx - 12, cy + 15);
+                ctx.fill();
+
+                // Skull Head
+                ctx.fillStyle = '#eee';
                 ctx.shadowColor = '#fff';
-                ctx.shadowBlur = 10;
-                ctx.fillRect(cx - 16, cy - 16, 32, 32);
+                ctx.shadowBlur = (this.invincibleTimer > 0) ? 0 : 5;
+                ctx.beginPath();
+                ctx.arc(cx, cy - 8, 10, 0, Math.PI * 2);
+                ctx.fill();
                 ctx.shadowBlur = 0;
 
-                ctx.fillStyle = '#000';
-                ctx.fillRect(cx - 8, cy - 6, 6, 6);
-                ctx.fillRect(cx + 2, cy - 6, 6, 6);
-                ctx.fillRect(cx - 6, cy + 8, 12, 4);
+                // Eyes
+                ctx.fillStyle = '#ff0000';
+                ctx.beginPath();
+                ctx.arc(cx - 3, cy - 8, 2, 0, Math.PI * 2);
+                ctx.arc(cx + 3, cy - 8, 2, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Hands (Floating)
+                const t = Date.now() / 200;
+                ctx.fillStyle = '#eee';
+                ctx.beginPath();
+                ctx.arc(cx - 15, cy + Math.sin(t) * 3, 4, 0, Math.PI * 2);
+                ctx.arc(cx + 15, cy + Math.cos(t) * 3, 4, 0, Math.PI * 2);
+                ctx.fill();
             }
         }
 
@@ -968,7 +1196,28 @@
                 this.modalLevelUp.classList.add('visible');
                 this.containerUpgrades.innerHTML = '';
                 const opts = [];
-                for (let i = 0; i < 3; i++) opts.push(this.getRandomUpgrade());
+                // Pool strategy for strict uniqueness
+                const pool = [...UPGRADES];
+                while (opts.length < 3 && pool.length > 0) {
+                    let totalWeight = pool.reduce((a, b) => a + b.weight, 0);
+                    let r = Math.random() * totalWeight;
+
+                    let selectedIndex = -1;
+                    for (let j = 0; j < pool.length; j++) {
+                        if (r < pool[j].weight) {
+                            selectedIndex = j;
+                            break;
+                        }
+                        r -= pool[j].weight;
+                    }
+
+                    if (selectedIndex === -1) selectedIndex = 0;
+                    opts.push(pool[selectedIndex]);
+                    pool.splice(selectedIndex, 1);
+                }
+
+                console.log("Level Up Options Generated:", opts.map(o => o.name));
+
                 opts.forEach(u => {
                     const c = document.createElement('div');
                     c.className = 'upgrade-card';
@@ -1075,7 +1324,7 @@
                 const sx = this.player.x - this.canvas.width / 2;
                 const sy = this.player.y - this.canvas.height / 2;
 
-                this.drawGrid(sx, sy);
+                this.drawBackground(sx, sy);
 
                 // Draw Entities
                 // Layering: Gems -> Chests -> Particles -> Projectiles -> Enemies -> Player -> Text
@@ -1085,11 +1334,19 @@
                 this.projectiles.forEach(e => e.draw(this.ctx, sx, sy));
                 this.enemies.forEach(e => e.draw(this.ctx, sx, sy));
                 this.player.draw(this.ctx, sx, sy);
+
+                this.drawLighting();
+
                 this.texts.forEach(e => e.draw(this.ctx, sx, sy));
             }
 
-            drawGrid(sx, sy) {
-                this.ctx.strokeStyle = CONFIG.COLORS.GRID;
+            drawBackground(sx, sy) {
+                // Ground
+                this.ctx.fillStyle = '#0a0a0a';
+                this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+                // Grid (Faint)
+                this.ctx.strokeStyle = '#1a1a1a';
                 this.ctx.lineWidth = 2;
                 this.ctx.beginPath();
 
@@ -1106,6 +1363,40 @@
                     this.ctx.lineTo(this.canvas.width, y - sy);
                 }
                 this.ctx.stroke();
+
+                // Random details (Grass/Dirt patches)
+                // Deterministic random using coordinates
+                const patchSz = 200;
+                const pStartX = Math.floor(sx / patchSz) * patchSz;
+                const pStartY = Math.floor(sy / patchSz) * patchSz;
+
+                this.ctx.fillStyle = '#111511';
+                for (let x = pStartX; x < sx + this.canvas.width + patchSz; x += patchSz) {
+                    for (let y = pStartY; y < sy + this.canvas.height + patchSz; y += patchSz) {
+                        // Pseudo-random based on position
+                        const r = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453;
+                        if ((r - Math.floor(r)) > 0.7) {
+                            this.ctx.fillRect(x - sx + 10, y - sy + 10, patchSz - 20, patchSz - 20);
+                        }
+                    }
+                }
+            }
+
+            drawLighting() {
+                // Vignette
+                const grad = this.ctx.createRadialGradient(
+                    this.canvas.width / 2, this.canvas.height / 2, this.canvas.height / 3,
+                    this.canvas.width / 2, this.canvas.height / 2, this.canvas.height
+                );
+                grad.addColorStop(0, 'rgba(0,0,0,0)');
+                grad.addColorStop(1, 'rgba(0,0,0,0.8)');
+
+                this.ctx.fillStyle = grad;
+                this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+                // Color Overlay (night tint)
+                this.ctx.fillStyle = 'rgba(0, 5, 20, 0.2)';
+                this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
             }
 
             loop(timestamp) {
