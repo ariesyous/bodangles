@@ -313,6 +313,45 @@
             transform: translate(-50%, -50%);
             box-shadow: 0 0 10px rgba(255, 255, 255, 0.2);
         }
+
+        #inventory-bar {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            display: flex;
+            gap: 6px;
+            pointer-events: none;
+        }
+
+        .inv-slot {
+            width: 40px;
+            height: 40px;
+            background: rgba(0, 0, 0, 0.6);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.4rem;
+            position: relative;
+        }
+
+        .inv-slot .inv-badge {
+            position: absolute;
+            bottom: -2px;
+            right: -2px;
+            background: #ffd700;
+            color: #000;
+            font-size: 0.6rem;
+            font-weight: bold;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            line-height: 1;
+        }
     </style>
 </head>
 
@@ -343,6 +382,9 @@
                 Score: <span id="score">0</span>
             </div>
         </div>
+
+        <!-- Inventory Bar -->
+        <div id="inventory-bar"></div>
 
         <!-- Mobile Joystick -->
         <div id="mobile-controls">
@@ -918,9 +960,12 @@
                 super(owner.x, owner.y);
                 this.owner = owner;
                 this.angle = angle;
+                this.startAngle = angle - 1.0;
+                this.endAngle = angle + 1.0;
                 this.length = length;
                 this.damage = damage;
-                this.life = 0.2; // Quick lash
+                this.life = 0.35;
+                this.maxLife = 0.35;
                 this.hitList = [];
             }
 
@@ -931,18 +976,20 @@
                 this.x = this.owner.x;
                 this.y = this.owner.y;
 
-                // Rectangular hitbox check along the line of the whip
-                // Simplified: check points along the line
-                const steps = 10;
-                for (let i = 1; i <= steps; i++) {
-                    const ld = (this.length / steps) * i;
-                    const lx = this.x + Math.cos(this.angle) * ld;
-                    const ly = this.y + Math.sin(this.angle) * ld;
+                const progress = 1 - (this.life / this.maxLife);
+                const segments = 12;
+                for (let i = 1; i <= segments; i++) {
+                    const t = i / segments;
+                    const segProgress = Math.max(0, Math.min(1, progress * 1.5 - t * 0.5));
+                    const segAngle = this.startAngle + (this.endAngle - this.startAngle) * segProgress;
+                    const dist = (this.length / segments) * i;
+                    const lx = this.x + Math.cos(segAngle) * dist;
+                    const ly = this.y + Math.sin(segAngle) * dist;
 
                     game.enemies.forEach(e => {
                         if (this.hitList.includes(e.id)) return;
                         const d = (e.x - lx) ** 2 + (e.y - ly) ** 2;
-                        if (d < (e.size + 20) ** 2) { // 20 radius whip thickness
+                        if (d < (e.size + 20) ** 2) {
                             e.takeDamage(this.damage, game);
                             this.hitList.push(e.id);
                         }
@@ -953,28 +1000,49 @@
             draw(ctx, sx, sy) {
                 const cx = this.x - sx;
                 const cy = this.y - sy;
+                const progress = 1 - (this.life / this.maxLife);
 
                 ctx.save();
-                ctx.translate(cx, cy);
-                ctx.rotate(this.angle);
+                const segments = 12;
+                let prevX = cx, prevY = cy;
+                for (let i = 0; i < segments; i++) {
+                    const t = (i + 1) / segments;
+                    const segProgress = Math.max(0, Math.min(1, progress * 1.5 - t * 0.5));
+                    const segAngle = this.startAngle + (this.endAngle - this.startAngle) * segProgress;
+                    const dist = (this.length / segments) * (i + 1);
+                    const px = cx + Math.cos(segAngle) * dist;
+                    const py = cy + Math.sin(segAngle) * dist;
 
-                // Draw Spine
-                for (let i = 0; i < 10; i++) {
-                    const x = (this.length / 10) * i;
-                    ctx.fillStyle = '#eee';
+                    const thickness = 8 * (1 - t * 0.6);
+
+                    const g = Math.floor(255 - t * 55);
+                    ctx.strokeStyle = `rgb(${g}, ${g}, 255)`;
+                    ctx.lineWidth = thickness;
+                    ctx.lineCap = 'round';
+
+                    ctx.shadowColor = `rgba(100, 200, 255, ${0.5 * (1 - t)})`;
+                    ctx.shadowBlur = 8 * (1 - t);
+
                     ctx.beginPath();
-                    ctx.fillRect(x, -5, (this.length / 10) - 2, 10);
+                    ctx.moveTo(prevX, prevY);
+                    ctx.lineTo(px, py);
+                    ctx.stroke();
+
+                    prevX = px;
+                    prevY = py;
                 }
 
+                ctx.shadowBlur = 0;
                 ctx.restore();
             }
         }
 
         class Tombstone extends Entity {
-            constructor(x, y, damage) {
+            constructor(x, y, damage, radius) {
                 super(x, y - 500); // Start high up
                 this.targetY = y;
                 this.damage = damage;
+                this.radius = radius || 120;
                 this.vy = 1000;
                 this.landed = false;
                 this.life = 1.0; // Stay for 1 sec after landing
@@ -987,15 +1055,14 @@
                         this.y = this.targetY;
                         this.landed = true;
                         // Smash!
-                        // Screenshake maybe?
-                        const radius = 80;
+                        const hitRadius = this.radius * 0.67;
                         game.enemies.forEach(e => {
                             const d = (e.x - this.x) ** 2 + (e.y - this.y) ** 2;
-                            if (d < (radius + e.size) ** 2) {
+                            if (d < (hitRadius + e.size) ** 2) {
                                 e.takeDamage(this.damage * 2, game); // Massive crit on direct hit
                             }
                         }); // Also purely visual shockwave
-                        game.particles.push(new Explosion(this.x, this.y, this.damage / 2, 120)); // Smaller damage wider area
+                        game.particles.push(new Explosion(this.x, this.y, this.damage / 2, this.radius));
                     }
                 } else {
                     this.life -= dt;
@@ -1036,6 +1103,7 @@
                 this.hp = typeDef.hp;
                 this.maxHp = typeDef.hp;
                 this.speed = typeDef.speed;
+                this.size = typeDef.size;
                 this.hitFlash = 0;
                 this.isBoss = !!typeDef.boss;
             }
@@ -1045,10 +1113,9 @@
                 if (this.hp <= 0 && !this.markedForDeletion) {
                     this.markedForDeletion = true;
                     if (game) {
-                        game.player.gainXp(this.props.xp);
                         game.score += this.props.xp;
                         if (Math.random() < 0.01) game.chests.push(new Chest(this.x, this.y));
-                        else if (Math.random() < 0.05) game.gems.push(new Gem(this.x, this.y, this.props.xp));
+                        else game.gems.push(new Gem(this.x, this.y, this.props.xp));
                     }
                     return true;
                 }
@@ -1309,7 +1376,8 @@
 
             upgrade() {
                 this.level++;
-                // Check weapon-specific upgrade table
+                this.stats.damage = Math.round(this.stats.damage * 1.25);
+                this.stats.cooldown = Math.round(this.stats.cooldown * 0.9 * 100) / 100;
             }
         }
 
@@ -1378,6 +1446,11 @@
                 this.name = "Femur Club";
             }
 
+            upgrade() {
+                super.upgrade();
+                this.stats.knockback = Math.round(this.stats.knockback * 1.15);
+            }
+
             fire() {
                 // Swing in facing direction
                 // For simplicity, swing towards nearest enemy or movement direction
@@ -1423,6 +1496,11 @@
                 };
                 this.name = "Rib Cage";
                 this.pulseTimer = 0;
+            }
+
+            upgrade() {
+                super.upgrade();
+                this.stats.range = Math.round(this.stats.range * 1.15);
             }
 
             update(dt) {
@@ -1479,6 +1557,11 @@
                 this.name = "Skull Bomb";
             }
 
+            upgrade() {
+                super.upgrade();
+                this.stats.radius = Math.round(this.stats.radius * 1.15);
+            }
+
             fire() {
                 let closest = null;
                 let minDist = Infinity;
@@ -1529,27 +1612,31 @@
                 this.name = "Spine Whip";
             }
 
+            upgrade() {
+                super.upgrade();
+                this.stats.range = Math.round(this.stats.range * 1.15);
+            }
+
             fire() {
-                // Lash in movement direction
-                let vx = this.owner.vx;
-                let vy = this.owner.vy;
-                // If not moving, check enemies
-                if (Math.abs(vx) < 1 && Math.abs(vy) < 1) {
-                    let closest = null;
-                    let minDist = Infinity;
-                    for (const e of this.game.enemies) {
-                        const d = (e.x - this.owner.x) ** 2 + (e.y - this.owner.y) ** 2;
-                        if (d < minDist) { minDist = d; closest = e; }
-                    }
-                    if (closest && minDist < 160000) { // 400px
-                        vx = closest.x - this.owner.x;
-                        vy = closest.y - this.owner.y;
-                    } else {
-                        vx = 1; vy = 0; // Default right
-                    }
+                // Target nearest enemy first
+                let closest = null;
+                let minDist = Infinity;
+                for (const e of this.game.enemies) {
+                    const d = (e.x - this.owner.x) ** 2 + (e.y - this.owner.y) ** 2;
+                    if (d < minDist) { minDist = d; closest = e; }
                 }
 
-                const angle = Math.atan2(vy, vx);
+                let angle;
+                if (closest && minDist < 160000) { // 400px range
+                    angle = Math.atan2(closest.y - this.owner.y, closest.x - this.owner.x);
+                } else {
+                    // Fall back to movement direction
+                    let vx = this.owner.vx;
+                    let vy = this.owner.vy;
+                    if (Math.abs(vx) < 1 && Math.abs(vy) < 1) { vx = 1; vy = 0; }
+                    angle = Math.atan2(vy, vx);
+                }
+
                 this.game.particles.push(new SpineWhip(this.owner, angle, this.stats.range, this.stats.damage));
             }
         }
@@ -1560,8 +1647,14 @@
                 this.stats = {
                     cooldown: 4.0,
                     damage: 100,
+                    radius: 120,
                 };
                 this.name = "Tombstone Drop";
+            }
+
+            upgrade() {
+                super.upgrade();
+                this.stats.radius = Math.round(this.stats.radius * 1.15);
             }
 
             fire() {
@@ -1584,7 +1677,7 @@
                     targetY += (Math.random() - 0.5) * 400;
                 }
 
-                this.game.particles.push(new Tombstone(targetX, targetY, this.stats.damage));
+                this.game.particles.push(new Tombstone(targetX, targetY, this.stats.damage, this.stats.radius));
             }
         }
 
@@ -1651,6 +1744,7 @@
 
                 this.bossesSpawned = { 1: false, 2: false, 3: false };
                 this.endlessMode = false;
+                this.acquiredUpgrades = [];
 
                 this.isGameOver = false;
                 this.isPaused = false;
@@ -1812,6 +1906,34 @@
                 this.elXpFill.style.width = Math.max(0, (this.player.xp / this.player.nextLevelXp) * 100) + '%';
                 this.elLevel.innerText = 'LVL ' + this.player.level;
                 this.elScore.innerText = this.score;
+
+                // Rebuild inventory bar
+                const bar = document.getElementById('inventory-bar');
+                if (bar) {
+                    bar.innerHTML = '';
+                    // Weapon icons
+                    this.player.weapons.forEach(w => {
+                        const upg = UPGRADES.find(u => u.name === w.name);
+                        const icon = upg ? upg.icon : '🦴';
+                        const slot = document.createElement('div');
+                        slot.className = 'inv-slot';
+                        slot.innerHTML = icon;
+                        if (w.level > 1) {
+                            const badge = document.createElement('div');
+                            badge.className = 'inv-badge';
+                            badge.textContent = w.level;
+                            slot.appendChild(badge);
+                        }
+                        bar.appendChild(slot);
+                    });
+                    // Stat upgrade icons
+                    this.acquiredUpgrades.forEach(u => {
+                        const slot = document.createElement('div');
+                        slot.className = 'inv-slot';
+                        slot.innerHTML = u.icon;
+                        bar.appendChild(slot);
+                    });
+                }
             }
 
             gameOver() {
@@ -1859,6 +1981,7 @@
                         this.applyUpgrade(u);
                         this.modalLevelUp.classList.remove('visible');
                         this.isPaused = false;
+                        this.updateUI();
                     };
                     this.containerUpgrades.appendChild(c);
                 });
@@ -1872,6 +1995,9 @@
             }
 
             applyUpgrade(u) {
+                if (u.type === 'stat' || u.type === 'heal') {
+                    this.acquiredUpgrades.push(u);
+                }
                 if (u.type === 'stat') {
                     if (u.mult) {
                         if (u.stat === 'projectileCount') this.player.stats[u.stat] += u.value;
@@ -1964,6 +2090,7 @@
 
                 this.modalChest.classList.remove('visible');
                 this.isPaused = false;
+                this.updateUI();
             }
 
             draw() {
